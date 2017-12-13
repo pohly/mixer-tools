@@ -18,45 +18,66 @@ func main() {
 		return
 	}
 	if len(os.Args) == 2 {
-		fmt.Println(Hashcalc(os.Args[1]))
+		r, err := Hashcalc(os.Args[1])
+		if err != nil {
+			fmt.Printf("%s\n", r)
+		} else {
+			fmt.Fprintf(os.Stderr, "Error %s for %s\n", err, os.Args[1])
+		}
 	} else {
 		for _, filename := range os.Args[1:] {
-			fmt.Printf("%s\t%s\n", filename,
-				Hashcalc(filename))
+			r, err := Hashcalc(filename)
+			if err != nil {
+				fmt.Printf("%s\t%s\n", filename, r)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error %s for %s\n", err, filename)
+			}
 		}
 	}
 }
 
-func Hashcalc(filename string) string {
-	key, ftype, err := hmac_compute_key(filename)
-	var result, data []byte
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error stating file '%s' %v\n", filename, err)
-		return ""
+// Hashcalc returns the swupd hash for the given file
+func Hashcalc(filename string) (string, error) {
+	var info syscall.Stat_t
+	var err error
+	var data []byte
+	if err = syscall.Lstat(filename, &info); err != nil {
+		return "", fmt.Errorf("Error stating file '%s' %v\n", filename, err)
 	}
-	switch ftype {
-	case '-':
+	// Get magic constants out of /usr/include/bits/stat.h
+	switch info.Mode & 0170000 {
+	case 0100000: // Regular file
 		data, err = ioutil.ReadFile(filename)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Read error for '%s' %v\n", filename, err)
-			return ""
+			return "", fmt.Errorf("Read error for '%s' %v\n", filename, err)
 		}
-	case 'd':
+	case 0040000: // Directory
+		info.Size = 0
 		data = []byte("DIRECTORY") // fixed magic string
-	case 'l':
-		if target, err := os.Readlink(filename); err != nil {
-			fmt.Fprintf(os.Stderr, "Error readlink file '%s' %v\n", filename, err)
-			return ""
-		} else {
-			data = []byte(target)
+	case 0120000:
+		info.Mode = 0
+		target, err := os.Readlink(filename)
+		if err != nil {
+			return "", fmt.Errorf("Error readlink file '%s' %v\n", filename, err)
 		}
+		data = []byte(target)
+	default:
+		return "", fmt.Errorf("%s is not a file, directory or symlink %o", filename, info.Mode&0170000)
 	}
-	result = hmac_sha256_for_data(key, data)
+	r := genHash(info, data)
+	return r, nil
+}
+
+// genHash generates hash string from butchered Stat_t and data
+// Expects that its callers have validated the arguments
+func genHash(info syscall.Stat_t, data []byte) string {
+	key := hmacComputeKey(info)
+	result := hmacSha256ForData(key, data)
 	return string(result[:])
 }
 
-// hmac_sha256_for_data returns an ascii string of hex digits
-func hmac_sha256_for_data(key []byte, data []byte) []byte {
+// hmacSha256ForData returns an array of 64 ascii hex digits
+func hmacSha256ForData(key []byte, data []byte) []byte {
 	var result [64]byte
 
 	mac := hmac.New(sha256.New, key)
@@ -82,29 +103,13 @@ func set(out []byte, in int64) {
 	}
 }
 
-// hmac_compute_key returns what should be an ascii string as an array of byte
+// hmacComputeKey returns what should be an ascii string as an array of byte
 // it is really ugly to be compatible with the C implementation. It is not portable
 // as the C version isn't portable.
-func hmac_compute_key(filename string) ([]byte, rune, error) {
+// The syscall.Stat_t has been butchered
+func hmacComputeKey(info syscall.Stat_t) []byte {
 	// Create the key
 	updatestat := [40]byte{}
-	var info syscall.Stat_t
-	if err := syscall.Lstat(filename, &info); err != nil {
-		return nil, 'x', err
-	}
-	ftype := '-'
-	// Get magic constants out of /usr/include/bits/stat.h
-	switch info.Mode & 0170000 {
-	case 0100000: // Regular file
-	case 0040000: // Directory
-		ftype = 'd'
-		info.Size = 0
-	case 0120000:
-		ftype = 'l'
-		info.Mode = 0
-	default:
-		return nil, 'x', fmt.Errorf("%s is not a file, directory or symlink %o", filename, info.Mode&0170000)
-	}
 	set(updatestat[0:8], int64(info.Mode))
 	set(updatestat[8:16], int64(info.Uid))
 	set(updatestat[16:24], int64(info.Gid))
@@ -112,6 +117,6 @@ func hmac_compute_key(filename string) ([]byte, rune, error) {
 	set(updatestat[24:32], 0)
 	set(updatestat[32:40], info.Size)
 	// fmt.Printf("key is %v\n", updatestat)
-	key := hmac_sha256_for_data(updatestat[:], nil)
-	return key, ftype, nil
+	key := hmacSha256ForData(updatestat[:], nil)
+	return key
 }
