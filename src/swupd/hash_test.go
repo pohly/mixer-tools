@@ -30,7 +30,8 @@ func TestInternHash(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("validHash", func(t *testing.T) {
-			if idx := internHash(tc.hash); idx != tc.expected {
+			idx := internHash(tc.hash)
+			if idx != tc.expected {
 				t.Errorf("interned hash index %v did not match expected %v",
 					idx, tc.expected)
 			}

@@ -1,7 +1,7 @@
 CUR_DIR = $(shell pwd)
 
 %.build:
-	GOPATH=$(CUR_DIR) go install $(subst .build,,$@)
+	GOPATH=$(GOPATH):$(CUR_DIR) go install $(subst .build,,$@)
 
 clean:
 	test ! -d $(CUR_DIR)/pkg || rm -rvf $(CUR_DIR)/pkg; \
@@ -22,7 +22,7 @@ prep_coverage:
 %.test: prep_coverage
 	@ ( \
 		safe_nom=`echo "$(subst .test,,$@)" | sed 's/\//_/g'`; \
-		GOPATH=$(CUR_DIR) go test -v -cover -covermode=count -coverprofile=_coverage_$$safe_nom.out  $(subst .test,,$@); \
+		GOPATH=$(CUR_DIR):$(GOPATH) go test -v -cover -covermode=count -coverprofile=_coverage_$$safe_nom.out  $(subst .test,,$@); \
 		tail -n +2 _coverage_$$safe_nom.out >> coverage.out; \
 		rm _coverage_$$safe_nom.out; \
 	);
